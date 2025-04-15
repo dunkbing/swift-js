@@ -1,7 +1,7 @@
 .PHONY: build run run-example clean xcode
 
 build:
-	swift build
+	swift build --configuration release
 
 run:
 	swift run SwiftJSRuntime

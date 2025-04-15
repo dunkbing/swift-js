@@ -118,7 +118,8 @@ class CLI {
 
             runtime.context.setObject(filename, forKeyedSubscript: "__filename" as NSString)
             runtime.context.setObject(dirname, forKeyedSubscript: "__dirname" as NSString)
-            runtime.execute(script, filename: path)
+
+            let _ = runtime.execute(script, filename: path)
         } catch {
             print("Error reading JavaScript file: \(error)")
         }
@@ -133,7 +134,7 @@ class CLI {
     }
 
     func startREPL() {
-        print("SwiftJS REPL v0.1")
+        print("SwiftJS REPL v\(SwiftJSVersion.version)")
         print("Type .exit to exit, .help for more commands")
 
         var running = true
@@ -151,6 +152,59 @@ class CLI {
                 default:
                     executeString(script: input)
                 }
+            }
+        }
+    }
+
+    func showVersion() {
+        print("SwiftJSRuntime v\(SwiftJSVersion.version)")
+    }
+
+    // Added method to display help
+    func showHelp() {
+        print("SwiftJSRuntime v\(SwiftJSVersion.version) - A JavaScript runtime written in Swift")
+        print("")
+        print("Usage: SwiftJSRuntime [options] [script.js] [arguments]")
+        print("")
+        print("Options:")
+        print("  --version, -v     Print the version")
+        print("  --help, -h        Print this help message")
+        print("  repl              Start the REPL environment")
+        print("")
+        print("Examples:")
+        print("  SwiftJSRuntime                        Show this help")
+        print("  SwiftJSRuntime repl                   Start REPL mode")
+        print("  SwiftJSRuntime script.js              Run a script")
+        print("  SwiftJSRuntime script.js arg1 arg2    Run a script with arguments")
+    }
+
+    // Added method to parse and handle command line arguments
+    func parseCommandLineArguments() {
+        let args = CommandLine.arguments
+
+        if args.count <= 1 {
+            // No arguments provided, show help instead of starting REPL
+            showHelp()
+            return
+        }
+
+        // Get the first argument (excluding the program name)
+        let firstArg = args[1]
+
+        switch firstArg {
+        case "--version", "-v":
+            showVersion()
+        case "--help", "-h":
+            showHelp()
+        case "repl":
+            startREPL()
+        default:
+            // Assume it's a script file path
+            if FileManager.default.fileExists(atPath: firstArg) {
+                executeFile(path: firstArg)
+            } else {
+                print("Error: File '\(firstArg)' not found.")
+                exit(1)
             }
         }
     }
