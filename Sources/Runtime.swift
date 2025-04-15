@@ -1,10 +1,10 @@
 import Foundation
 import JavaScriptCore
 
-class JSRuntime {
+class Runtime {
     let context: JSContext
     let moduleCache: JSValue
-    private var console: JSConsole?
+    private var console: Console?
     private var currentScriptSource: String?
     private var currentScriptPath: String?
 
@@ -75,7 +75,7 @@ class JSRuntime {
             }
         }
 
-        self.console = JSConsole(context: context, runtime: self)
+        self.console = Console(context: context, runtime: self)
         setupTimers()
         setupRequire()
     }

@@ -1,11 +1,11 @@
 import Foundation
 import JavaScriptCore
 
-class JSConsole {
+class Console {
     private let context: JSContext
-    private weak var runtime: JSRuntime?
+    private weak var runtime: Runtime?
 
-    init(context: JSContext, runtime: JSRuntime? = nil) {
+    init(context: JSContext, runtime: Runtime? = nil) {
         self.context = context
         self.runtime = runtime
         setupConsole()

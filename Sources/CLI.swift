@@ -2,10 +2,10 @@ import Foundation
 import JavaScriptCore
 
 class CLI {
-    private let runtime: JSRuntime
+    private let runtime: Runtime
 
     init() {
-        self.runtime = JSRuntime()
+        self.runtime = Runtime()
         setupEnvironment()
     }
 
@@ -30,52 +30,15 @@ class CLI {
 
         runtime.context.setObject(process, forKeyedSubscript: "process" as NSString)
 
-        // basic module
-        setupFSModule()
-        setupPathModule()
+        setupModules()
     }
 
-    private func setupFSModule() {
-        let fs = JSValue(object: [:], in: runtime.context)
+    private func setupModules() {
+        let fsModule = FS(context: runtime.context)
+        runtime.moduleCache.setObject(fsModule.module(), forKeyedSubscript: "fs" as NSString)
 
-        let readFileSync: @convention(block) (String, JSValue?) -> Any? = { path, encodingValue in
-            let encoding = encodingValue?.toString()
-            do {
-                let data = try Data(contentsOf: URL(fileURLWithPath: path))
-                if encoding == "utf8" || encoding == nil {
-                    return String(data: data, encoding: .utf8)
-                } else {
-                    return data
-                }
-            } catch {
-                print("Error reading file: \(error)")
-                return nil
-            }
-        }
-        fs?.setObject(readFileSync, forKeyedSubscript: "readFileSync" as NSString)
-
-        let writeFileSync: @convention(block) (String, Any, JSValue?) -> Bool = { path, data, options in
-            do {
-                if let stringData = data as? String {
-                    try stringData.write(toFile: path, atomically: true, encoding: .utf8)
-                } else if let binaryData = data as? Data {
-                    try binaryData.write(to: URL(fileURLWithPath: path))
-                }
-                return true
-            } catch {
-                print("Error writing file: \(error)")
-                return false
-            }
-        }
-        fs?.setObject(writeFileSync, forKeyedSubscript: "writeFileSync" as NSString)
-
-        let existsSync: @convention(block) (String) -> Bool = { path in
-            return FileManager.default.fileExists(atPath: path)
-        }
-        fs?.setObject(existsSync, forKeyedSubscript: "existsSync" as NSString)
-
-        // add to runtime
-        runtime.moduleCache.setObject(fs, forKeyedSubscript: "fs" as NSString)
+        // others
+        setupPathModule()
     }
 
     private func setupPathModule() {
@@ -160,7 +123,6 @@ class CLI {
         print("SwiftJSRuntime v\(SwiftJSVersion.version)")
     }
 
-    // Added method to display help
     func showHelp() {
         print("SwiftJSRuntime v\(SwiftJSVersion.version) - A JavaScript runtime written in Swift")
         print("")
@@ -178,7 +140,6 @@ class CLI {
         print("  SwiftJSRuntime script.js arg1 arg2    Run a script with arguments")
     }
 
-    // Added method to parse and handle command line arguments
     func parseCommandLineArguments() {
         let args = CommandLine.arguments
 
