@@ -120,7 +120,7 @@ class JSRuntimeCLI {
             runtime.context.setObject(dirname, forKeyedSubscript: "__dirname" as NSString)
 
             print("Executing JavaScript file: \(path)")
-            if let result = runtime.execute(script) {
+            if let result = runtime.execute(script, filename: path) {
                 if !result.isUndefined && !result.isNull {
                     print("Result: \(result.toString() ?? "undefined")")
                 }
@@ -131,7 +131,7 @@ class JSRuntimeCLI {
     }
 
     func executeString(script: String) {
-        if let result = runtime.execute(script) {
+        if let result = runtime.execute(script, filename: "repl") {
             if !result.isUndefined && !result.isNull {
                 print("Result: \(result.toString() ?? "undefined")")
             }

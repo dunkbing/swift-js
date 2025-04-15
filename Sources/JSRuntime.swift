@@ -5,6 +5,8 @@ class JSRuntime {
     let context: JSContext
     let moduleCache: JSValue
     private var console: JSConsole?
+    private var currentScriptSource: String?
+    private var currentScriptPath: String?
 
     init() {
         guard let context = JSContext() else {
@@ -17,19 +19,75 @@ class JSRuntime {
         self.moduleCache = JSValue(object: [:], in: context)
         context.setObject(self.moduleCache, forKeyedSubscript: "moduleCache" as NSString)
 
-        self.context.exceptionHandler = { context, exception in
-            if let exception = exception {
-                print("JS Error: \(exception.toString() ?? "Unknown error")")
+        self.context.exceptionHandler = { [weak self] context, exception in
+            guard let self = self, let exception = exception else { return }
 
-                if let stack = exception.objectForKeyedSubscript("stack")?.toString() {
-                    print("Stack trace: \(stack)")
+            let errorMessage = exception.toString() ?? "Unknown error"
+            let errorType = exception.objectForKeyedSubscript("name")?.toString() ?? "Error"
+            let lineNumber = exception.objectForKeyedSubscript("line")?.toInt32() ?? 0
+            let column = exception.objectForKeyedSubscript("column")?.toInt32() ?? 0
+            let stack = exception.objectForKeyedSubscript("stack")?.toString() ?? ""
+
+            // format error to show code context
+            if let scriptSource = self.currentScriptSource, lineNumber > 0 {
+                let lines = scriptSource.components(separatedBy: .newlines)
+
+                let startLine = max(0, Int(lineNumber) - 2)
+                let endLine = min(lines.count - 1, Int(lineNumber) + 1)
+
+                print("\nCaught explicitly:", terminator: " ")
+
+                for i in startLine...endLine {
+                    let lineNum = i + 1  // Lines are 1-indexed in error messages
+                    let formattedLineNum = String(format: "%d", lineNum)
+
+                    if lineNum == lineNumber {
+                        print("\(formattedLineNum) | \(lines[i])")
+
+                        let pointerIndent = " ".repeated(formattedLineNum.count + 3 + Int(column) - 1)
+                        print("\(pointerIndent)^")
+
+                        print("\(errorType): \(errorMessage)")
+
+                        if let path = self.currentScriptPath {
+                            print("      at \(path):\(lineNumber):\(column)")
+                        }
+                    } else {
+                        print("\(formattedLineNum) | \(lines[i])")
+                    }
+                }
+
+                // Print additional stack trace lines if available
+                if !stack.isEmpty {
+                    let stackLines = stack.components(separatedBy: .newlines)
+                    for stackLine in stackLines.dropFirst() {
+                        let trimmedLine = stackLine.trimmingCharacters(in: .whitespaces)
+                        if !trimmedLine.isEmpty && !trimmedLine.hasPrefix("global code") {
+                            print("      \(trimmedLine)")
+                        }
+                    }
+                }
+            } else {
+                print("JS Error: \(errorType): \(errorMessage)")
+                if !stack.isEmpty {
+                    print("Stack trace:\n\(stack)")
                 }
             }
         }
 
-        self.console = JSConsole(context: context)
+        self.console = JSConsole(context: context, runtime: self)
         setupTimers()
         setupRequire()
+    }
+
+    // Provide access to the current script source
+    func getCurrentScriptSource() -> String? {
+        return currentScriptSource
+    }
+
+    // Provide access to the current script path
+    func getCurrentScriptPath() -> String? {
+        return currentScriptPath
     }
 
     private func setupTimers() {
@@ -46,7 +104,6 @@ class JSRuntime {
 
         context.setObject(setTimeout, forKeyedSubscript: "setTimeout" as NSString)
 
-        // clearTimeout
         let clearTimeout: @convention(block) (Int) -> Void = { _ in }
         context.setObject(clearTimeout, forKeyedSubscript: "clearTimeout" as NSString)
     }
@@ -77,6 +134,12 @@ class JSRuntime {
                 if FileManager.default.fileExists(atPath: path) {
                     do {
                         let moduleScript = try String(contentsOfFile: path, encoding: .utf8)
+                        let oldScriptPath = self.currentScriptPath
+                        let oldScriptSource = self.currentScriptSource
+
+                        // current script details for error handling
+                        self.currentScriptPath = path
+                        self.currentScriptSource = moduleScript
 
                         let exports = JSValue(object: [:], in: self.context)
                         let module = JSValue(object: [:], in: self.context)
@@ -105,6 +168,10 @@ class JSRuntime {
 
                             self.moduleCache.setObject(moduleExports, forKeyedSubscript: moduleName as NSString)
 
+                            // Restore previous script details
+                            self.currentScriptPath = oldScriptPath
+                            self.currentScriptSource = oldScriptSource
+
                             return moduleExports
                         }
                     } catch {
@@ -121,8 +188,16 @@ class JSRuntime {
     }
 
     // execute js code
-    func execute(_ script: String) -> JSValue? {
-        return context.evaluateScript(script)
+    func execute(_ script: String, filename: String? = nil) -> JSValue? {
+        self.currentScriptSource = script
+        self.currentScriptPath = filename
+
+        let result = context.evaluateScript(script)
+
+        self.currentScriptSource = nil
+        self.currentScriptPath = nil
+
+        return result
     }
 
     // register a native Swift function that takes no arguments
