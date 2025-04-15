@@ -5,6 +5,8 @@ class Runtime {
     let context: JSContext
     let moduleCache: JSValue
     private var console: Console?
+    let eventLoop: EventLoop
+
     private var currentScriptSource: String?
     private var currentScriptPath: String?
 
@@ -14,10 +16,13 @@ class Runtime {
         }
 
         self.context = context
+        self.eventLoop = EventLoop()
 
         // init module system
         self.moduleCache = JSValue(object: [:], in: context)
         context.setObject(self.moduleCache, forKeyedSubscript: "moduleCache" as NSString)
+
+        setupEventLoopFunctions()
 
         self.context.exceptionHandler = { [weak self] context, exception in
             guard let self = self, let exception = exception else { return }
@@ -80,12 +85,40 @@ class Runtime {
         setupRequire()
     }
 
-    // Provide access to the current script source
+    private func setupEventLoopFunctions() {
+        let incrementPendingOps: @convention(block) () -> Void = { [weak self] in
+            self?.eventLoop.incrementPendingOperations()
+        }
+
+        let decrementPendingOps: @convention(block) () -> Void = { [weak self] in
+            self?.eventLoop.decrementPendingOperations()
+        }
+
+        let getPendingOpsCount: @convention(block) () -> Int = { [weak self] in
+            return self?.eventLoop.getPendingOperationsCount() ?? 0
+        }
+
+        context.setObject(incrementPendingOps, forKeyedSubscript: "__incrementPendingOps" as NSString)
+        context.setObject(decrementPendingOps, forKeyedSubscript: "__decrementPendingOps" as NSString)
+        context.setObject(getPendingOpsCount, forKeyedSubscript: "__getPendingOpsCount" as NSString)
+    }
+
+    func incrementPendingOperations() {
+        eventLoop.incrementPendingOperations()
+    }
+
+    func decrementPendingOperations() {
+        eventLoop.decrementPendingOperations()
+    }
+
+    func waitForPendingOperations(timeout: TimeInterval = 60.0) -> Bool {
+        return eventLoop.waitForPendingOperations(timeout: timeout)
+    }
+
     func getCurrentScriptSource() -> String? {
         return currentScriptSource
     }
 
-    // Provide access to the current script path
     func getCurrentScriptPath() -> String? {
         return currentScriptPath
     }

@@ -37,7 +37,9 @@ class CLI {
         let fsModule = FS(context: runtime.context)
         runtime.moduleCache.setObject(fsModule.module(), forKeyedSubscript: "fs" as NSString)
 
-        // others
+        let httpModule = HTTP(context: runtime.context)
+        runtime.moduleCache.setObject(httpModule.module(), forKeyedSubscript: "http" as NSString)
+
         setupPathModule()
     }
 
