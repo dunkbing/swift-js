@@ -118,12 +118,7 @@ class CLI {
 
             runtime.context.setObject(filename, forKeyedSubscript: "__filename" as NSString)
             runtime.context.setObject(dirname, forKeyedSubscript: "__dirname" as NSString)
-
-            if let result = runtime.execute(script, filename: path) {
-                if !result.isUndefined && !result.isNull {
-                    print("Result: \(result.toString() ?? "undefined")")
-                }
-            }
+            runtime.execute(script, filename: path)
         } catch {
             print("Error reading JavaScript file: \(error)")
         }
