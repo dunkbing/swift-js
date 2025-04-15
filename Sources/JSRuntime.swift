@@ -4,6 +4,7 @@ import JavaScriptCore
 class JSRuntime {
     let context: JSContext
     let moduleCache: JSValue
+    private var console: JSConsole?
 
     init() {
         guard let context = JSContext() else {
@@ -11,6 +12,10 @@ class JSRuntime {
         }
 
         self.context = context
+
+        // init module system
+        self.moduleCache = JSValue(object: [:], in: context)
+        context.setObject(self.moduleCache, forKeyedSubscript: "moduleCache" as NSString)
 
         self.context.exceptionHandler = { context, exception in
             if let exception = exception {
@@ -22,38 +27,12 @@ class JSRuntime {
             }
         }
 
-        let console = JSValue(object: [:], in: context)
+        self.console = JSConsole(context: context)
+        setupTimers()
+        setupRequire()
+    }
 
-        let consoleLog: @convention(block) (JSValue) -> Void = { args in
-            let count = args.toArray()?.count ?? 0
-            var messages: [String] = []
-
-            for i in 0..<count {
-                if let arg = args.atIndex(i) {
-                    messages.append(arg.toString() ?? "undefined")
-                }
-            }
-
-            print(messages.joined(separator: " "))
-        }
-
-        let consoleError: @convention(block) (JSValue) -> Void = { args in
-            let count = args.toArray()?.count ?? 0
-            var messages: [String] = []
-
-            for i in 0..<count {
-                if let arg = args.atIndex(i) {
-                    messages.append(arg.toString() ?? "undefined")
-                }
-            }
-
-            print("ERROR:", messages.joined(separator: " "))
-        }
-
-        console?.setObject(consoleLog, forKeyedSubscript: "log" as NSString)
-        console?.setObject(consoleError, forKeyedSubscript: "error" as NSString)
-        context.setObject(console, forKeyedSubscript: "console" as NSString)
-
+    private func setupTimers() {
         // setTimeout
         let setTimeout: @convention(block) (JSValue, Double) -> Int = { callback, delay in
             let id = Int.random(in: 1...10000)
@@ -70,11 +49,9 @@ class JSRuntime {
         // clearTimeout
         let clearTimeout: @convention(block) (Int) -> Void = { _ in }
         context.setObject(clearTimeout, forKeyedSubscript: "clearTimeout" as NSString)
+    }
 
-        // module system
-        self.moduleCache = JSValue(object: [:], in: context)
-        context.setObject(self.moduleCache, forKeyedSubscript: "moduleCache" as NSString)
-
+    private func setupRequire() {
         // require implementation
         let require: @convention(block) (String) -> JSValue? = { [weak self] moduleName in
             guard let self = self else { return nil }
