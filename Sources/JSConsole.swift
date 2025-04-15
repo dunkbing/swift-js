@@ -12,24 +12,34 @@ class JSConsole {
     private func setupConsole() {
         let console = JSValue(object: [:], in: context)
 
-        let consoleLog: @convention(block) (JSValue) -> Void = { args in
-            self.formatAndPrint(args: args)
+        let consoleLog: @convention(block) () -> Void = { [self] in
+            if let args = JSContext.currentArguments() as? [JSValue] {
+                self.formatAndPrint(args: args)
+            }
         }
 
-        let consoleError: @convention(block) (JSValue) -> Void = { args in
-            self.formatAndPrint(args: args, prefix: "ERROR")
+        let consoleError: @convention(block) () -> Void = { [self] in
+            if let args = JSContext.currentArguments() as? [JSValue] {
+                self.formatAndPrint(args: args, prefix: "ERROR")
+            }
         }
 
-        let consoleWarn: @convention(block) (JSValue) -> Void = { args in
-            self.formatAndPrint(args: args, prefix: "WARNING")
+        let consoleWarn: @convention(block) () -> Void = { [self] in
+            if let args = JSContext.currentArguments() as? [JSValue] {
+                self.formatAndPrint(args: args, prefix: "WARNING")
+            }
         }
 
-        let consoleInfo: @convention(block) (JSValue) -> Void = { args in
-            self.formatAndPrint(args: args, prefix: "INFO")
+        let consoleInfo: @convention(block) () -> Void = { [self] in
+            if let args = JSContext.currentArguments() as? [JSValue] {
+                self.formatAndPrint(args: args, prefix: "INFO")
+            }
         }
 
-        let consoleDebug: @convention(block) (JSValue) -> Void = { args in
-            self.formatAndPrint(args: args, prefix: "DEBUG")
+        let consoleDebug: @convention(block) () -> Void = { [self] in
+            if let args = JSContext.currentArguments() as? [JSValue] {
+                self.formatAndPrint(args: args, prefix: "DEBUG")
+            }
         }
 
         let consoleClear: @convention(block) () -> Void = {
@@ -56,10 +66,19 @@ class JSConsole {
             }
         }
 
-        let consoleAssert: @convention(block) (Bool, JSValue) -> Void = { condition, args in
-            if !condition {
-                print("Assertion failed: ", terminator: "")
-                self.formatAndPrint(args: args)
+        let consoleAssert: @convention(block) () -> Void = { [self] in
+            if let args = JSContext.currentArguments() as? [JSValue], args.count > 0 {
+                let condition = args[0].toBool()
+                if !condition {
+                    print("Assertion failed: ", terminator: "")
+                    if args.count > 1 {
+                        var remainingArgs = [JSValue]()
+                        for i in 1..<args.count {
+                            remainingArgs.append(args[i])
+                        }
+                        self.formatAndPrint(args: remainingArgs)
+                    }
+                }
             }
         }
 
@@ -77,22 +96,19 @@ class JSConsole {
         context.setObject(console, forKeyedSubscript: "console" as NSString)
     }
 
-    private func formatAndPrint(args: JSValue, prefix: String? = nil) {
-        let count = args.toArray()?.count ?? 0
+    private func formatAndPrint(args: [JSValue], prefix: String? = nil) {
         var messages: [String] = []
 
-        for i in 0..<count {
-            if let arg = args.atIndex(i) {
-                if arg.isObject {
-                    if let jsonData = try? JSONSerialization.data(withJSONObject: arg.toObject() ?? [:], options: [.prettyPrinted]),
-                       let jsonString = String(data: jsonData, encoding: .utf8) {
-                        messages.append(jsonString)
-                    } else {
-                        messages.append(arg.toString() ?? "undefined")
-                    }
+        for arg in args {
+            if arg.isObject {
+                if let jsonData = try? JSONSerialization.data(withJSONObject: arg.toObject() ?? [:], options: [.prettyPrinted]),
+                   let jsonString = String(data: jsonData, encoding: .utf8) {
+                    messages.append(jsonString)
                 } else {
-                    messages.append(arg.toString() ?? "undefined")
+                    messages.append(arg.toString() ?? UNDEFINED)
                 }
+            } else {
+                messages.append(arg.toString() ?? UNDEFINED)
             }
         }
 
