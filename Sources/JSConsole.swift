@@ -140,27 +140,23 @@ class JSConsole {
         let lineNumber = errorValue.objectForKeyedSubscript("line")?.toInt32() ?? 0
         let column = errorValue.objectForKeyedSubscript("column")?.toInt32() ?? 0
         let stack = errorValue.objectForKeyedSubscript("stack")?.toString() ?? ""
-        let fileName = errorValue.objectForKeyedSubscript("fileName")?.toString() ?? errorValue.objectForKeyedSubscript("sourceURL")?.toString() ?? "unknown"
 
         // stack location
+        let filePath = runtime?.getCurrentScriptPath() ?? "script"
         var extractedLineNumber = lineNumber
         var extractedColumn = column
-        var extractedFileName = fileName
 
         if lineNumber == 0 && !stack.isEmpty {
             let stackLines = stack.components(separatedBy: .newlines)
             for line in stackLines {
-                if let match = line.range(of: "(?:at\\s+)?(\\S+):(\\d+):(\\d+)", options: .regularExpression) {
-                    let locationPart = line[match]
-                    let parts = locationPart.components(separatedBy: ":")
-                    if parts.count >= 3 {
-                        if extractedFileName == "unknown" {
-                            extractedFileName = String(parts[0].trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "at ", with: ""))
-                        }
-                        if let line = Int32(parts[parts.count-2]) {
+                if let match = line.range(of: ":(\\d+):(\\d+)", options: .regularExpression) {
+                    let matchedText = line[match]
+                    let components = String(matchedText).components(separatedBy: ":")
+                    if components.count >= 3 {
+                        if let line = Int32(components[1]) {
                             extractedLineNumber = line
                         }
-                        if let col = Int32(parts[parts.count-1]) {
+                        if let col = Int32(components[2]) {
                             extractedColumn = col
                         }
                         break
@@ -192,8 +188,7 @@ class JSConsole {
                 }
             }
 
-            // file location
-            result += "\n      at \(extractedFileName):\(extractedLineNumber):\(extractedColumn)"
+            result += "\n      at \(filePath):\(extractedLineNumber):\(extractedColumn)"
 
             if !stack.isEmpty {
                 let stackLines = stack.components(separatedBy: .newlines)
@@ -210,13 +205,18 @@ class JSConsole {
             var formattedError = "\(errorName): \(message)"
 
             if !stack.isEmpty {
-                formattedError = "Caught explicitly: \(formattedError)\n      at \(extractedFileName):\(extractedLineNumber):\(extractedColumn)"
+                formattedError = "\(formattedError)\n      at \(filePath):\(extractedLineNumber):\(extractedColumn)"
+
                 let stackLines = stack.components(separatedBy: .newlines)
                 for stackLine in stackLines.dropFirst() {
                     let trimmedLine = stackLine.trimmingCharacters(in: .whitespaces)
                     if !trimmedLine.isEmpty && !trimmedLine.hasPrefix("global code") {
                         formattedError += "\n      \(trimmedLine)"
                     }
+                }
+            } else {
+                if extractedLineNumber > 0 {
+                    formattedError += "\n      at \(filePath):\(extractedLineNumber):\(extractedColumn)"
                 }
             }
 

@@ -1,7 +1,7 @@
 import Foundation
 import JavaScriptCore
 
-class JSRuntimeCLI {
+class CLI {
     private let runtime: JSRuntime
 
     init() {
@@ -119,7 +119,6 @@ class JSRuntimeCLI {
             runtime.context.setObject(filename, forKeyedSubscript: "__filename" as NSString)
             runtime.context.setObject(dirname, forKeyedSubscript: "__dirname" as NSString)
 
-            print("Executing JavaScript file: \(path)")
             if let result = runtime.execute(script, filename: path) {
                 if !result.isUndefined && !result.isNull {
                     print("Result: \(result.toString() ?? "undefined")")
