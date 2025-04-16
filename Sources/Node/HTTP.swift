@@ -2,9 +2,9 @@ import JavaScriptCore
 import NIO
 import Foundation
 
-class HTTP {
-    private let context: JSContext
-    private let moduleValue: JSValue
+class HTTP: ErrorAwareJSModule {
+    let context: JSContext
+    let moduleValue: JSValue
     private let eventLoop: EventLoop
 
     init(context: JSContext, eventLoop: EventLoop) {
@@ -15,7 +15,7 @@ class HTTP {
         setupModule()
     }
 
-    private func setupModule() {
+    func setupModule() {
         let get: @convention(block) (String, JSValue?) -> Void = { [weak self] url, callback in
             guard let self = self else { return }
 
@@ -237,29 +237,6 @@ class HTTP {
         }
 
         moduleValue.setObject(createServer, forKeyedSubscript: "createServer" as NSString)
-    }
-
-    // Create JS Error objects
-    private func createError(message: String, name: String = "Error") -> JSValue {
-        if let errorConstructor = context.evaluateScript("Error") {
-            let error = errorConstructor.construct(withArguments: [message])!
-
-            // Set the name property if it's not the default "Error"
-            if name != "Error" {
-                error.setObject(name, forKeyedSubscript: "name" as NSString)
-            }
-
-            return error
-        } else {
-            let errorObj = JSValue(object: [:], in: context)!
-            errorObj.setObject(message, forKeyedSubscript: "message" as NSString)
-            errorObj.setObject(name, forKeyedSubscript: "name" as NSString)
-            return errorObj
-        }
-    }
-
-    private func jsNull() -> JSValue {
-        return context.evaluateScript("null")!
     }
 
     func module() -> JSValue {

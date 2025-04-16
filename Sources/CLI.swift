@@ -40,72 +40,13 @@ class CLI {
 
     private func setupModules() {
         let fsModule = FS(context: runtime.context, eventLoop: runtime.eventLoop)
-        runtime.moduleCache.setObject(fsModule.module(), forKeyedSubscript: "fs" as NSString)
+        runtime.registerModule(fsModule, name: "fs")
 
         let httpModule = HTTP(context: runtime.context, eventLoop: runtime.eventLoop)
-        runtime.moduleCache.setObject(httpModule.module(), forKeyedSubscript: "http" as NSString)
+        runtime.registerModule(httpModule, name: "http")
 
-        setupPathModule()
-    }
-
-    private func setupPathModule() {
-        let path = JSValue(object: [:], in: runtime.context)
-
-        let join: @convention(block) (JSValue) -> String = { argsValue in
-            var components: [String] = []
-            if let args = argsValue.toArray() {
-                for arg in args {
-                    if let component = arg as? String {
-                        components.append(component)
-                    }
-                }
-            }
-
-            let url = components.reduce(URL(fileURLWithPath: "")) { (result, component) in
-                return result.appendingPathComponent(component)
-            }
-            return url.path
-        }
-        path?.setObject(join, forKeyedSubscript: "join" as NSString)
-
-        let basename: @convention(block) (String) -> String = { path in
-            return URL(fileURLWithPath: path).lastPathComponent
-        }
-        path?.setObject(basename, forKeyedSubscript: "basename" as NSString)
-
-        let dirname: @convention(block) (String) -> String = { path in
-            return URL(fileURLWithPath: path).deletingLastPathComponent().path
-        }
-        path?.setObject(dirname, forKeyedSubscript: "dirname" as NSString)
-
-        let extname: @convention(block) (String) -> String = { path in
-            let ext = URL(fileURLWithPath: path).pathExtension
-            return ext.isEmpty ? "" : ".\(ext)"
-        }
-        path?.setObject(extname, forKeyedSubscript: "extname" as NSString)
-
-        let resolve: @convention(block) (JSValue) -> String = { argsValue in
-            var result = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-
-            if let args = argsValue.toArray() {
-                for arg in args {
-                    if let component = arg as? String {
-                        // absolute paths
-                        if component.starts(with: "/") {
-                            result = URL(fileURLWithPath: component)
-                        } else {
-                            result = result.appendingPathComponent(component)
-                        }
-                    }
-                }
-            }
-
-            return result.standardized.path
-        }
-        path?.setObject(resolve, forKeyedSubscript: "resolve" as NSString)
-        path?.setObject(String(FileManager.default.pathSeparator), forKeyedSubscript: "sep" as NSString)
-
-        runtime.moduleCache.setObject(path, forKeyedSubscript: "path" as NSString)
+        let pathModule = Path(context: runtime.context)
+        runtime.registerModule(pathModule, name: "path")
     }
 
     func executeFile(path: String) {

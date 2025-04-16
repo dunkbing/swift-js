@@ -2,9 +2,9 @@ import JavaScriptCore
 import NIO
 import Foundation
 
-class FS {
-    private let context: JSContext
-    private let moduleValue: JSValue
+class FS: ErrorAwareJSModule {
+    let context: JSContext
+    let moduleValue: JSValue
     private let eventLoop: EventLoop
     private let threadPool: NIOThreadPool
 
@@ -24,7 +24,7 @@ class FS {
         try? threadPool.syncShutdownGracefully()
     }
 
-    private func setupModule() {
+    func setupModule() {
         let readFileSync: @convention(block) (String, JSValue?) -> Any? = { [weak self] path, encodingValue in
             guard let self = self else { return nil }
 
@@ -37,7 +37,7 @@ class FS {
                     return data
                 }
             } catch {
-                let errorObj = self.createError("Error reading file: \(error.localizedDescription)")
+                let errorObj = self.createError(message: "Error reading file: \(error.localizedDescription)")
                 return context.evaluateScript("throw \(errorObj)")
             }
         }
@@ -78,7 +78,7 @@ class FS {
                         actualCallback.call(withArguments: [self.jsNull(), base64])
                     }
                 } catch {
-                    let jsError = self.createError("Error reading file: \(error.localizedDescription)")
+                    let jsError = self.createError(message: "Error reading file: \(error.localizedDescription)")
                     actualCallback.call(withArguments: [jsError, self.jsNull()])
                 }
 
@@ -100,7 +100,7 @@ class FS {
                 }
                 return true
             } catch {
-                let errorObj = self.createError("Error writing file: \(error.localizedDescription)")
+                let errorObj = self.createError(message: "Error writing file: \(error.localizedDescription)")
                 _ = context.evaluateScript("throw \(errorObj)")
                 return false
             }
@@ -129,7 +129,7 @@ class FS {
 
                     actualCallback?.call(withArguments: [self.jsNull()])
                 } catch {
-                    let jsError = self.createError("Error writing file: \(error.localizedDescription)")
+                    let jsError = self.createError(message: "Error writing file: \(error.localizedDescription)")
                     actualCallback?.call(withArguments: [jsError])
                 }
 
@@ -176,7 +176,7 @@ class FS {
                 )
                 return true
             } catch {
-                let errorObj = self.createError("Error creating directory: \(error.localizedDescription)")
+                let errorObj = self.createError(message: "Error creating directory: \(error.localizedDescription)")
                 _ = self.context.evaluateScript("throw \(errorObj)")
                 return false
             }
@@ -202,7 +202,7 @@ class FS {
                     )
                     actualCallback?.call(withArguments: [self.jsNull()])
                 } catch {
-                    let jsError = self.createError("Error creating directory: \(error.localizedDescription)")
+                    let jsError = self.createError(message: "Error creating directory: \(error.localizedDescription)")
                     actualCallback?.call(withArguments: [jsError])
                 }
 
@@ -220,7 +220,7 @@ class FS {
                 let contents = try FileManager.default.contentsOfDirectory(atPath: path)
                 return contents
             } catch {
-                let errorObj = self.createError("Error reading directory: \(error.localizedDescription)")
+                let errorObj = self.createError(message: "Error reading directory: \(error.localizedDescription)")
                 return self.context.evaluateScript("throw \(errorObj)")
             }
         }
@@ -236,7 +236,7 @@ class FS {
                     let contents = try FileManager.default.contentsOfDirectory(atPath: path)
                     callback?.call(withArguments: [self.jsNull(), contents])
                 } catch {
-                    let jsError = self.createError("Error reading directory: \(error.localizedDescription)")
+                    let jsError = self.createError(message: "Error reading directory: \(error.localizedDescription)")
                     callback?.call(withArguments: [jsError, self.jsNull()])
                 }
 
@@ -246,21 +246,112 @@ class FS {
             }
         }
         moduleValue.setObject(readdir, forKeyedSubscript: "readdir" as NSString)
+
+        // Add stat/statSync methods
+        setupStatMethods()
     }
 
-    private func createError(_ message: String) -> JSValue {
-        if let errorConstructor = context.evaluateScript("Error") {
-            return errorConstructor.construct(withArguments: [message])
-        } else {
-            let error = JSValue(object: [:], in: context)!
-            error.setObject(message, forKeyedSubscript: "message" as NSString)
-            error.setObject("Error", forKeyedSubscript: "name" as NSString)
-            return error
+    private func setupStatMethods() {
+        let statSync: @convention(block) (String) -> JSValue? = { [weak self] path in
+            guard let self = self else { return nil }
+
+            do {
+                let fileManager = FileManager.default
+                let attributes = try fileManager.attributesOfItem(atPath: path)
+
+                let stat = JSValue(object: [:], in: self.context)!
+
+                // Set common attributes from FileManager's attribute dictionary
+                if let size = attributes[.size] as? NSNumber {
+                    stat.setObject(size.int64Value, forKeyedSubscript: "size" as NSString)
+                }
+
+                if let modificationDate = attributes[.modificationDate] as? Date {
+                    stat.setObject(Int64(modificationDate.timeIntervalSince1970 * 1000), forKeyedSubscript: "mtime" as NSString)
+                }
+
+                if let creationDate = attributes[.creationDate] as? Date {
+                    stat.setObject(Int64(creationDate.timeIntervalSince1970 * 1000), forKeyedSubscript: "birthtime" as NSString)
+                }
+
+                // Set up file type checking methods
+                let fileType = attributes[.type] as? String
+                let isDirectory = fileType == FileAttributeType.typeDirectory.rawValue
+                let isFile = fileType == FileAttributeType.typeRegular.rawValue
+
+                // Method-based interface like Node.js
+                let isDirectoryFn: @convention(block) () -> Bool = {
+                    return isDirectory
+                }
+                stat.setObject(isDirectoryFn, forKeyedSubscript: "isDirectory" as NSString)
+
+                let isFileFn: @convention(block) () -> Bool = {
+                    return isFile
+                }
+                stat.setObject(isFileFn, forKeyedSubscript: "isFile" as NSString)
+
+                return stat
+            } catch {
+                let errorObj = self.createError(message: "Error getting file stats: \(error.localizedDescription)")
+                _ = self.context.evaluateScript("throw \(errorObj)")
+                return nil
+            }
         }
-    }
+        moduleValue.setObject(statSync, forKeyedSubscript: "statSync" as NSString)
 
-    private func jsNull() -> JSValue {
-        return context.evaluateScript("null")!
+        let stat: @convention(block) (String, JSValue?) -> Void = { [weak self] path, callback in
+            guard let self = self else { return }
+
+            self.context.objectForKeyedSubscript("__incrementPendingOps")?.call(withArguments: [])
+
+            let _ = self.eventLoop.execute {
+                do {
+                    let fileManager = FileManager.default
+                    let attributes = try fileManager.attributesOfItem(atPath: path)
+
+                    let stat = JSValue(object: [:], in: self.context)!
+
+                    // Set common attributes from FileManager's attribute dictionary
+                    if let size = attributes[.size] as? NSNumber {
+                        stat.setObject(size.int64Value, forKeyedSubscript: "size" as NSString)
+                    }
+
+                    if let modificationDate = attributes[.modificationDate] as? Date {
+                        stat.setObject(Int64(modificationDate.timeIntervalSince1970 * 1000), forKeyedSubscript: "mtime" as NSString)
+                    }
+
+                    if let creationDate = attributes[.creationDate] as? Date {
+                        stat.setObject(Int64(creationDate.timeIntervalSince1970 * 1000), forKeyedSubscript: "birthtime" as NSString)
+                    }
+
+                    // Set up file type checking methods
+                    let fileType = attributes[.type] as? String
+                    let isDirectory = fileType == FileAttributeType.typeDirectory.rawValue
+                    let isFile = fileType == FileAttributeType.typeRegular.rawValue
+
+                    // Method-based interface like Node.js
+                    let isDirectoryFn: @convention(block) () -> Bool = {
+                        return isDirectory
+                    }
+                    stat.setObject(isDirectoryFn, forKeyedSubscript: "isDirectory" as NSString)
+
+                    let isFileFn: @convention(block) () -> Bool = {
+                        return isFile
+                    }
+                    stat.setObject(isFileFn, forKeyedSubscript: "isFile" as NSString)
+
+                    callback?.call(withArguments: [self.jsNull(), stat])
+                } catch {
+                    let jsError = self.createError(message: "Error getting file stats: \(error.localizedDescription)")
+                    callback?.call(withArguments: [jsError, self.jsNull()])
+                }
+
+                self.context.objectForKeyedSubscript("__decrementPendingOps")?.call(withArguments: [])
+            }.whenFailure { error in
+                print("Error executing task: \(error)")
+            }
+        }
+        moduleValue.setObject(stat, forKeyedSubscript: "stat" as NSString)
     }
 
     func module() -> JSValue {
