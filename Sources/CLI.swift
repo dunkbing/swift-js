@@ -1,5 +1,6 @@
-import Foundation
 import JavaScriptCore
+import NIO
+import Foundation
 
 class CLI {
     private let runtime: Runtime
@@ -7,6 +8,10 @@ class CLI {
     init() {
         self.runtime = Runtime()
         setupEnvironment()
+    }
+
+    deinit {
+        let _ = runtime.waitForPendingOperations(timeout: 5.0)
     }
 
     private func setupEnvironment() {
@@ -34,10 +39,10 @@ class CLI {
     }
 
     private func setupModules() {
-        let fsModule = FS(context: runtime.context)
+        let fsModule = FS(context: runtime.context, eventLoop: runtime.eventLoop)
         runtime.moduleCache.setObject(fsModule.module(), forKeyedSubscript: "fs" as NSString)
 
-        let httpModule = HTTP(context: runtime.context)
+        let httpModule = HTTP(context: runtime.context, eventLoop: runtime.eventLoop)
         runtime.moduleCache.setObject(httpModule.module(), forKeyedSubscript: "http" as NSString)
 
         setupPathModule()
@@ -56,7 +61,10 @@ class CLI {
                 }
             }
 
-            return components.joined(separator: "/")
+            let url = components.reduce(URL(fileURLWithPath: "")) { (result, component) in
+                return result.appendingPathComponent(component)
+            }
+            return url.path
         }
         path?.setObject(join, forKeyedSubscript: "join" as NSString)
 
@@ -69,6 +77,33 @@ class CLI {
             return URL(fileURLWithPath: path).deletingLastPathComponent().path
         }
         path?.setObject(dirname, forKeyedSubscript: "dirname" as NSString)
+
+        let extname: @convention(block) (String) -> String = { path in
+            let ext = URL(fileURLWithPath: path).pathExtension
+            return ext.isEmpty ? "" : ".\(ext)"
+        }
+        path?.setObject(extname, forKeyedSubscript: "extname" as NSString)
+
+        let resolve: @convention(block) (JSValue) -> String = { argsValue in
+            var result = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+
+            if let args = argsValue.toArray() {
+                for arg in args {
+                    if let component = arg as? String {
+                        // absolute paths
+                        if component.starts(with: "/") {
+                            result = URL(fileURLWithPath: component)
+                        } else {
+                            result = result.appendingPathComponent(component)
+                        }
+                    }
+                }
+            }
+
+            return result.standardized.path
+        }
+        path?.setObject(resolve, forKeyedSubscript: "resolve" as NSString)
+        path?.setObject(String(FileManager.default.pathSeparator), forKeyedSubscript: "sep" as NSString)
 
         runtime.moduleCache.setObject(path, forKeyedSubscript: "path" as NSString)
     }
@@ -85,6 +120,10 @@ class CLI {
             runtime.context.setObject(dirname, forKeyedSubscript: "__dirname" as NSString)
 
             let _ = runtime.execute(script, filename: path)
+
+            if !runtime.waitForPendingOperations(timeout: 60.0) {
+                print("Warning: Some asynchronous operations did not complete within the timeout period")
+            }
         } catch {
             print("Error reading JavaScript file: \(error)")
         }
@@ -94,6 +133,10 @@ class CLI {
         if let result = runtime.execute(script, filename: "repl") {
             if !result.isUndefined && !result.isNull {
                 print("Result: \(result.toString() ?? "undefined")")
+            }
+
+            if !runtime.waitForPendingOperations(timeout: 5.0) {
+                print("Warning: Some asynchronous operations are still pending")
             }
         }
     }
@@ -114,6 +157,17 @@ class CLI {
                     print("Available commands:")
                     print("  .exit    Exit the REPL")
                     print("  .help    Show this help")
+                    print("  .clear   Clear the screen")
+                    print("  .load    Load a JavaScript file")
+                case ".clear":
+                    print("\u{1B}[2J\u{1B}[H", terminator: "")
+                case let cmd where cmd.starts(with: ".load "):
+                    let filePath = String(cmd.dropFirst(6)).trimmingCharacters(in: .whitespaces)
+                    if FileManager.default.fileExists(atPath: filePath) {
+                        executeFile(path: filePath)
+                    } else {
+                        print("Error: File not found: \(filePath)")
+                    }
                 default:
                     executeString(script: input)
                 }
@@ -146,12 +200,10 @@ class CLI {
         let args = CommandLine.arguments
 
         if args.count <= 1 {
-            // No arguments provided, show help instead of starting REPL
             showHelp()
             return
         }
 
-        // Get the first argument (excluding the program name)
         let firstArg = args[1]
 
         switch firstArg {
@@ -162,7 +214,6 @@ class CLI {
         case "repl":
             startREPL()
         default:
-            // Assume it's a script file path
             if FileManager.default.fileExists(atPath: firstArg) {
                 executeFile(path: firstArg)
             } else {

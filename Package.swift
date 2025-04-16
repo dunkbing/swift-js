@@ -9,10 +9,14 @@ let package = Package(
     products: [
         .executable(name: "SwiftJSRuntime", targets: ["SwiftJSRuntime"])
     ],
-    dependencies: [],
+    dependencies: [
+        .package(url: "https://github.com/apple/swift-nio.git", from: "2.0.0")
+    ],
     targets: [
         .executableTarget(
             name: "SwiftJSRuntime",
-            dependencies: [])
+            dependencies: [
+                .product(name: "NIO", package: "swift-nio"),
+            ])
     ]
 )

@@ -1,5 +1,6 @@
-import Foundation
 import JavaScriptCore
+import NIO
+import Foundation
 
 class Runtime {
     let context: JSContext
@@ -124,12 +125,22 @@ class Runtime {
     }
 
     private func setupTimers() {
-        // setTimeout
-        let setTimeout: @convention(block) (JSValue, Double) -> Int = { callback, delay in
+        let setTimeout: @convention(block) (JSValue, Double) -> Int = { [weak self] callback, delay in
+            guard let self = self else { return -1 }
+
             let id = Int.random(in: 1...10000)
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay/1000) {
+            self.incrementPendingOperations()
+
+            // Schedule the task on the event loop
+            let _ = self.eventLoop.schedule(delay: delay/1000) {
+                // execute js callback
                 callback.call(withArguments: [])
+
+                self.decrementPendingOperations()
+                return id
+            }.whenFailure { error in
+                print("Error executing scheduled task: \(error)")
             }
 
             return id
@@ -137,8 +148,45 @@ class Runtime {
 
         context.setObject(setTimeout, forKeyedSubscript: "setTimeout" as NSString)
 
+        // clearTimeout stub - in a real implementation, you'd want to track and cancel timers
         let clearTimeout: @convention(block) (Int) -> Void = { _ in }
         context.setObject(clearTimeout, forKeyedSubscript: "clearTimeout" as NSString)
+
+        let setInterval: @convention(block) (JSValue, Double) -> Int = { [weak self] callback, interval in
+            guard let self = self else { return -1 }
+
+            let id = Int.random(in: 1...10000)
+
+            let task = self.eventLoop.eventLoop.scheduleRepeatedTask(
+                initialDelay: .milliseconds(Int64(interval)),
+                delay: .milliseconds(Int64(interval))
+            ) { _ in
+                self.incrementPendingOperations()
+
+                callback.call(withArguments: [])
+
+                self.decrementPendingOperations()
+            }
+
+            let taskBox = TaskBox(task: task)
+            self.context.setObject(taskBox, forKeyedSubscript: "__interval_\(id)" as NSString)
+
+            return id
+        }
+
+        context.setObject(setInterval, forKeyedSubscript: "setInterval" as NSString)
+
+        let clearInterval: @convention(block) (Int) -> Void = { [weak self] id in
+            guard let self = self else { return }
+
+            let key = "__interval_\(id)" as NSString
+            if let taskBox = self.context.objectForKeyedSubscript(key).toObject() as? TaskBox {
+                taskBox.task.cancel()
+                self.context.setObject(nil, forKeyedSubscript: key)
+            }
+        }
+
+        context.setObject(clearInterval, forKeyedSubscript: "clearInterval" as NSString)
     }
 
     private func setupRequire() {
@@ -164,13 +212,14 @@ class Runtime {
             ]
 
             for path in possiblePaths {
+                // Use cross-platform FileManager APIs
                 if FileManager.default.fileExists(atPath: path) {
                     do {
                         let moduleScript = try String(contentsOfFile: path, encoding: .utf8)
                         let oldScriptPath = self.currentScriptPath
                         let oldScriptSource = self.currentScriptSource
 
-                        // current script details for error handling
+                        // Current script details for error handling
                         self.currentScriptPath = path
                         self.currentScriptSource = moduleScript
 
@@ -220,7 +269,6 @@ class Runtime {
         context.setObject(require, forKeyedSubscript: "require" as NSString)
     }
 
-    // execute js code
     func execute(_ script: String, filename: String? = nil) -> JSValue? {
         self.currentScriptSource = script
         self.currentScriptPath = filename
