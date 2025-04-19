@@ -25,9 +25,7 @@ class FS: ErrorAwareJSModule {
     }
 
     func setupModule() {
-        let readFileSync: @convention(block) (String, JSValue?) -> Any? = { [weak self] path, encodingValue in
-            guard let self = self else { return nil }
-
+        let readFileSync: @convention(block) (String, JSValue?) -> Any? = { [self] path, encodingValue in
             let encoding = encodingValue?.toString()
             do {
                 let data = try Data(contentsOf: URL(fileURLWithPath: path))
@@ -43,9 +41,7 @@ class FS: ErrorAwareJSModule {
         }
         moduleValue.setObject(readFileSync, forKeyedSubscript: "readFileSync" as NSString)
 
-        let readFile: @convention(block) (String, JSValue?, JSValue?) -> Void = { [weak self] path, options, callback in
-            guard let self = self else { return }
-
+        let readFile: @convention(block) (String, JSValue?, JSValue?) -> Void = { [self] path, options, callback in
             var encoding: String? = nil
             if let optionsObj = options {
                 if optionsObj.isString {
@@ -89,9 +85,7 @@ class FS: ErrorAwareJSModule {
         }
         moduleValue.setObject(readFile, forKeyedSubscript: "readFile" as NSString)
 
-        let writeFileSync: @convention(block) (String, Any, JSValue?) -> Bool = { [weak self] path, data, options in
-            guard let self = self else { return false }
-
+        let writeFileSync: @convention(block) (String, Any, JSValue?) -> Bool = { [self] path, data, options in
             do {
                 if let stringData = data as? String {
                     try stringData.write(toFile: path, atomically: true, encoding: .utf8)
@@ -107,9 +101,7 @@ class FS: ErrorAwareJSModule {
         }
         moduleValue.setObject(writeFileSync, forKeyedSubscript: "writeFileSync" as NSString)
 
-        let writeFile: @convention(block) (String, Any, JSValue?, JSValue?) -> Void = { [weak self] path, data, options, callback in
-            guard let self = self else { return }
-
+        let writeFile: @convention(block) (String, Any, JSValue?, JSValue?) -> Void = { [self] path, data, options, callback in
             var actualCallback = callback
             if actualCallback == nil && options != nil && !options!.isObject {
                 actualCallback = options
@@ -145,9 +137,7 @@ class FS: ErrorAwareJSModule {
         }
         moduleValue.setObject(existsSync, forKeyedSubscript: "existsSync" as NSString)
 
-        let exists: @convention(block) (String, JSValue?) -> Void = { [weak self] path, callback in
-            guard let self = self else { return }
-
+        let exists: @convention(block) (String, JSValue?) -> Void = { [self] path, callback in
             self.context.objectForKeyedSubscript("__incrementPendingOps")?.call(withArguments: [])
 
             let _ = self.eventLoop.execute {
@@ -165,29 +155,57 @@ class FS: ErrorAwareJSModule {
     }
 
     private func setupDirectoryMethods() {
-        let mkdirSync: @convention(block) (String, JSValue?) -> Bool = { [weak self] path, options in
-            guard let self = self else { return false }
+        let mkdirSync: @convention(block) (String, JSValue?) -> Bool = { [self] path, options in
+            var recursive = true
+
+            if let optionsObj = options, optionsObj.isObject {
+                if let recursiveOption = optionsObj.objectForKeyedSubscript("recursive")?.toBool() {
+                    recursive = recursiveOption
+                }
+            }
 
             do {
+                let url = URL(fileURLWithPath: path)
+
                 try FileManager.default.createDirectory(
-                    atPath: path,
-                    withIntermediateDirectories: true,
+                    at: url,
+                    withIntermediateDirectories: recursive,
                     attributes: nil
                 )
+
+                print("Successfully created directory at \(path)")
                 return true
-            } catch {
-                let errorObj = self.createError(message: "Error creating directory: \(error.localizedDescription)")
+            } catch let error as NSError {
+                let errorMessage: String
+
+                switch error.code {
+                case NSFileWriteNoPermissionError:
+                    errorMessage = "Permission denied: No permission to create directory at \(path)"
+                case NSFileWriteInvalidFileNameError:
+                    errorMessage = "Invalid filename: The path contains invalid characters"
+                case NSFileNoSuchFileError where !recursive:
+                    errorMessage = "Parent directory does not exist and recursive option is false"
+                default:
+                    errorMessage = "Error creating directory: \(error.localizedDescription)"
+                }
+
+                print("mkdirSync error: \(errorMessage)")
+                let errorObj = self.createError(message: errorMessage, name: "Error")
                 _ = self.context.evaluateScript("throw \(errorObj)")
                 return false
             }
         }
         moduleValue.setObject(mkdirSync, forKeyedSubscript: "mkdirSync" as NSString)
 
-        let mkdir: @convention(block) (String, JSValue?, JSValue?) -> Void = { [weak self] path, options, callback in
-            guard let self = self else { return }
-
+        let mkdir: @convention(block) (String, JSValue?, JSValue?) -> Void = { [self] path, options, callback in
             var actualCallback = callback
-            if actualCallback == nil && options != nil && !options!.isObject {
+            var recursive = true // Default to true for compatibility
+
+            if let optionsObj = options, optionsObj.isObject {
+                if let recursiveOption = optionsObj.objectForKeyedSubscript("recursive")?.toBool() {
+                    recursive = recursiveOption
+                }
+            } else if options != nil && !options!.isObject {
                 actualCallback = options
             }
 
@@ -195,14 +213,32 @@ class FS: ErrorAwareJSModule {
 
             let _ = self.eventLoop.execute {
                 do {
+                    let url = URL(fileURLWithPath: path)
+
                     try FileManager.default.createDirectory(
-                        atPath: path,
-                        withIntermediateDirectories: true,
+                        at: url,
+                        withIntermediateDirectories: recursive,
                         attributes: nil
                     )
+
+                    print("Successfully created directory at \(path)")
                     actualCallback?.call(withArguments: [self.jsNull()])
-                } catch {
-                    let jsError = self.createError(message: "Error creating directory: \(error.localizedDescription)")
+                } catch let error as NSError {
+                    let errorMessage: String
+
+                    switch error.code {
+                    case NSFileWriteNoPermissionError:
+                        errorMessage = "Permission denied: No permission to create directory at \(path)"
+                    case NSFileWriteInvalidFileNameError:
+                        errorMessage = "Invalid filename: The path contains invalid characters"
+                    case NSFileNoSuchFileError where !recursive:
+                        errorMessage = "Parent directory does not exist and recursive option is false"
+                    default:
+                        errorMessage = "Error creating directory: \(error.localizedDescription)"
+                    }
+
+                    print("mkdir error: \(errorMessage)")
+                    let jsError = self.createError(message: errorMessage)
                     actualCallback?.call(withArguments: [jsError])
                 }
 
@@ -213,9 +249,7 @@ class FS: ErrorAwareJSModule {
         }
         moduleValue.setObject(mkdir, forKeyedSubscript: "mkdir" as NSString)
 
-        let readdirSync: @convention(block) (String) -> Any? = { [weak self] path in
-            guard let self = self else { return nil }
-
+        let readdirSync: @convention(block) (String) -> Any? = { [self] path in
             do {
                 let contents = try FileManager.default.contentsOfDirectory(atPath: path)
                 return contents
@@ -226,9 +260,7 @@ class FS: ErrorAwareJSModule {
         }
         moduleValue.setObject(readdirSync, forKeyedSubscript: "readdirSync" as NSString)
 
-        let readdir: @convention(block) (String, JSValue?) -> Void = { [weak self] path, callback in
-            guard let self = self else { return }
-
+        let readdir: @convention(block) (String, JSValue?) -> Void = { [self] path, callback in
             self.context.objectForKeyedSubscript("__incrementPendingOps")?.call(withArguments: [])
 
             let _ = self.eventLoop.execute {
@@ -247,14 +279,36 @@ class FS: ErrorAwareJSModule {
         }
         moduleValue.setObject(readdir, forKeyedSubscript: "readdir" as NSString)
 
-        // Add stat/statSync methods
+        let rmdirSync: @convention(block) (String, JSValue?) -> Bool = { [self] path, options in
+            do {
+                let recursive = options?.objectForKeyedSubscript("recursive")?.toBool() ?? false
+
+                if recursive {
+                    try FileManager.default.removeItem(atPath: path)
+                } else {
+                    let contents = try FileManager.default.contentsOfDirectory(atPath: path)
+                    if !contents.isEmpty {
+                        let errorMsg = "Directory not empty: \(path)"
+                        let errorObj = self.createError(message: errorMsg, name: "Error")
+                        _ = self.context.evaluateScript("throw \(errorObj)")
+                        return false
+                    }
+                    try FileManager.default.removeItem(atPath: path)
+                }
+                return true
+            } catch {
+                let errorObj = self.createError(message: "Error removing directory: \(error.localizedDescription)")
+                _ = self.context.evaluateScript("throw \(errorObj)")
+                return false
+            }
+        }
+        moduleValue.setObject(rmdirSync, forKeyedSubscript: "rmdirSync" as NSString)
+
         setupStatMethods()
     }
 
     private func setupStatMethods() {
-        let statSync: @convention(block) (String) -> JSValue? = { [weak self] path in
-            guard let self = self else { return nil }
-
+        let statSync: @convention(block) (String) -> JSValue? = { [self] path in
             do {
                 let fileManager = FileManager.default
                 let attributes = try fileManager.attributesOfItem(atPath: path)
@@ -299,9 +353,7 @@ class FS: ErrorAwareJSModule {
         }
         moduleValue.setObject(statSync, forKeyedSubscript: "statSync" as NSString)
 
-        let stat: @convention(block) (String, JSValue?) -> Void = { [weak self] path, callback in
-            guard let self = self else { return }
-
+        let stat: @convention(block) (String, JSValue?) -> Void = { [self] path, callback in
             self.context.objectForKeyedSubscript("__incrementPendingOps")?.call(withArguments: [])
 
             let _ = self.eventLoop.execute {
